@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────
 
 export const STORAGE_KEY = "daily-tracker-data";
+export const TRACKING_INTERVAL = 5 * 60 * 1000;  // Alle 5 Minuten prüfen
 
 function toLocalDateKey(date) {
     const y = date.getFullYear();
@@ -150,4 +151,82 @@ export async function resetData() {
     } catch (e) {
         console.error("[daily-tracker] Reset error:", e);
     }
+}
+
+// ─────────────────────────────────────────────────────
+// IDLE DETECTION: System-weite Aktivitätserkennung
+// ─────────────────────────────────────────────────────
+
+export async function initAutoTracking() {
+    // Prüfe ob IdleDetector API verfügbar ist
+    if (!('IdleDetector' in window)) {
+        console.warn('[daily-tracker] IdleDetector API nicht verfügbar – Fallback auf alte Methode');
+        initFallbackTracking();
+        return;
+    }
+
+    try {
+        // Permission anfragen
+        const permission = await IdleDetector.requestPermission();
+        if (permission !== 'granted') {
+            console.warn('[daily-tracker] IdleDetector-Permission verweigert');
+            initFallbackTracking();
+            return;
+        }
+
+        const idleDetector = new IdleDetector();
+
+        // Event-Listener für Zustandsänderungen
+        idleDetector.addEventListener('change', async () => {
+            const userState = idleDetector.userState;   // "active" oder "idle"
+            const screenState = idleDetector.screenState; // "locked" oder "unlocked"
+
+            console.log(`[daily-tracker] Systemstatus: User=${userState}, Screen=${screenState}`);
+
+            // Nur tracken wenn benutzer aktiv UND screen nicht gesperrt
+            if (userState === 'active' && screenState === 'unlocked') {
+                await recordVisit();
+            } else {
+                console.log('[daily-tracker] PC inaktiv/gesperrt – kein Tracking');
+            }
+        });
+
+        // Starten
+        await idleDetector.start({
+            threshold: 60000, // 1 Minute Schwelle für idle-Erkennung
+        });
+
+        console.log('[daily-tracker] Idle Detection aktiviert ✓');
+
+    } catch (e) {
+        console.error('[daily-tracker] IdleDetector-Fehler:', e);
+        initFallbackTracking();
+    }
+}
+
+// Fallback für Browser ohne IdleDetector
+function initFallbackTracking() {
+    console.log('[daily-tracker] Nutze Fallback-Tracking (alte Methode)');
+    
+    let lastActivityTime = Date.now();
+    const ACTIVITY_THRESHOLD = 10 * 60 * 1000; // 10 Min
+
+    function updateActivity() {
+        lastActivityTime = Date.now();
+    }
+
+    // Globale Listener für Benutzeraktivität
+    document.addEventListener('mousemove', updateActivity, { passive: true });
+    document.addEventListener('keydown', updateActivity, { passive: true });
+    document.addEventListener('scroll', updateActivity, { passive: true });
+    document.addEventListener('click', updateActivity, { passive: true });
+    document.addEventListener('touchstart', updateActivity, { passive: true });
+
+    // Alle 5 Minuten prüfen
+    setInterval(async () => {
+        const isActive = (Date.now() - lastActivityTime) < ACTIVITY_THRESHOLD;
+        if (isActive) {
+            await recordVisit();
+        }
+    }, TRACKING_INTERVAL);
 }
