@@ -4,8 +4,7 @@
 // ─────────────────────────────────────────────────────
 
 export const STORAGE_KEY = "daily-tracker-data";
-export const ACTIVITY_THRESHOLD = 10 * 60 * 1000; // 10 Minuten Inaktivität = idle
-export const TRACKING_INTERVAL = 5 * 60 * 1000;  // Alle 5 Minuten tracken
+export const TRACKING_INTERVAL = 5 * 60 * 1000;  // Alle 5 Minuten prüfen
 
 function toLocalDateKey(date) {
     const y = date.getFullYear();
@@ -155,42 +154,79 @@ export async function resetData() {
 }
 
 // ─────────────────────────────────────────────────────
-// AUTO-TRACKING: Kontinuierliche Aktivitätserkennung
+// IDLE DETECTION: System-weite Aktivitätserkennung
 // ─────────────────────────────────────────────────────
 
-export function initAutoTracking() {
-    let lastActivityTime = Date.now();
-    let trackingInterval = null;
+export async function initAutoTracking() {
+    // Prüfe ob IdleDetector API verfügbar ist
+    if (!('IdleDetector' in window)) {
+        console.warn('[daily-tracker] IdleDetector API nicht verfügbar – Fallback auf alte Methode');
+        initFallbackTracking();
+        return;
+    }
 
-    // Aktivitäts-Listener
+    try {
+        // Permission anfragen
+        const permission = await IdleDetector.requestPermission();
+        if (permission !== 'granted') {
+            console.warn('[daily-tracker] IdleDetector-Permission verweigert');
+            initFallbackTracking();
+            return;
+        }
+
+        const idleDetector = new IdleDetector();
+
+        // Event-Listener für Zustandsänderungen
+        idleDetector.addEventListener('change', async () => {
+            const userState = idleDetector.userState;   // "active" oder "idle"
+            const screenState = idleDetector.screenState; // "locked" oder "unlocked"
+
+            console.log(`[daily-tracker] Systemstatus: User=${userState}, Screen=${screenState}`);
+
+            // Nur tracken wenn benutzer aktiv UND screen nicht gesperrt
+            if (userState === 'active' && screenState === 'unlocked') {
+                await recordVisit();
+            } else {
+                console.log('[daily-tracker] PC inaktiv/gesperrt – kein Tracking');
+            }
+        });
+
+        // Starten
+        await idleDetector.start({
+            threshold: 60000, // 1 Minute Schwelle für idle-Erkennung
+        });
+
+        console.log('[daily-tracker] Idle Detection aktiviert ✓');
+
+    } catch (e) {
+        console.error('[daily-tracker] IdleDetector-Fehler:', e);
+        initFallbackTracking();
+    }
+}
+
+// Fallback für Browser ohne IdleDetector
+function initFallbackTracking() {
+    console.log('[daily-tracker] Nutze Fallback-Tracking (alte Methode)');
+    
+    let lastActivityTime = Date.now();
+    const ACTIVITY_THRESHOLD = 10 * 60 * 1000; // 10 Min
+
     function updateActivity() {
         lastActivityTime = Date.now();
     }
 
+    // Globale Listener für Benutzeraktivität
     document.addEventListener('mousemove', updateActivity, { passive: true });
     document.addEventListener('keydown', updateActivity, { passive: true });
     document.addEventListener('scroll', updateActivity, { passive: true });
     document.addEventListener('click', updateActivity, { passive: true });
     document.addEventListener('touchstart', updateActivity, { passive: true });
 
-    // Tracking-Loop: Alle 5 Minuten prüfen ob aktiv
-    trackingInterval = setInterval(async () => {
+    // Alle 5 Minuten prüfen
+    setInterval(async () => {
         const isActive = (Date.now() - lastActivityTime) < ACTIVITY_THRESHOLD;
-        
         if (isActive) {
             await recordVisit();
-        } else {
-            console.log('[daily-tracker] Inaktiv, kein Tracking');
         }
     }, TRACKING_INTERVAL);
-
-    // Cleanup-Funktion (optional)
-    return () => {
-        clearInterval(trackingInterval);
-        document.removeEventListener('mousemove', updateActivity);
-        document.removeEventListener('keydown', updateActivity);
-        document.removeEventListener('scroll', updateActivity);
-        document.removeEventListener('click', updateActivity);
-        document.removeEventListener('touchstart', updateActivity);
-    };
 }
