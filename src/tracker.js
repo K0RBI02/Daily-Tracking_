@@ -4,6 +4,8 @@
 // ─────────────────────────────────────────────────────
 
 export const STORAGE_KEY = "daily-tracker-data";
+export const ACTIVITY_THRESHOLD = 10 * 60 * 1000; // 10 Minuten Inaktivität = idle
+export const TRACKING_INTERVAL = 5 * 60 * 1000;  // Alle 5 Minuten tracken
 
 function toLocalDateKey(date) {
     const y = date.getFullYear();
@@ -150,4 +152,45 @@ export async function resetData() {
     } catch (e) {
         console.error("[daily-tracker] Reset error:", e);
     }
+}
+
+// ─────────────────────────────────────────────────────
+// AUTO-TRACKING: Kontinuierliche Aktivitätserkennung
+// ─────────────────────────────────────────────────────
+
+export function initAutoTracking() {
+    let lastActivityTime = Date.now();
+    let trackingInterval = null;
+
+    // Aktivitäts-Listener
+    function updateActivity() {
+        lastActivityTime = Date.now();
+    }
+
+    document.addEventListener('mousemove', updateActivity, { passive: true });
+    document.addEventListener('keydown', updateActivity, { passive: true });
+    document.addEventListener('scroll', updateActivity, { passive: true });
+    document.addEventListener('click', updateActivity, { passive: true });
+    document.addEventListener('touchstart', updateActivity, { passive: true });
+
+    // Tracking-Loop: Alle 5 Minuten prüfen ob aktiv
+    trackingInterval = setInterval(async () => {
+        const isActive = (Date.now() - lastActivityTime) < ACTIVITY_THRESHOLD;
+        
+        if (isActive) {
+            await recordVisit();
+        } else {
+            console.log('[daily-tracker] Inaktiv, kein Tracking');
+        }
+    }, TRACKING_INTERVAL);
+
+    // Cleanup-Funktion (optional)
+    return () => {
+        clearInterval(trackingInterval);
+        document.removeEventListener('mousemove', updateActivity);
+        document.removeEventListener('keydown', updateActivity);
+        document.removeEventListener('scroll', updateActivity);
+        document.removeEventListener('click', updateActivity);
+        document.removeEventListener('touchstart', updateActivity);
+    };
 }
